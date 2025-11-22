@@ -4,39 +4,57 @@ const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 
-const URL = 'https://swap.ca/fr/products/canada-ro-nomination-whv';
-const FILE_PATH = path.join(__dirname, 'last_fingerprint.txt');
+// --- CONFIGURATION DES CIBLES ---
+const TARGETS = [
+  {
+    name: 'FRANÇAIS 🇫🇷',
+    url: 'https://swap.ca/fr/products/canada-ro-nomination-whv',
+    file: 'last_fingerprint_fr.txt'
+  },
+  {
+    name: 'ANGLAIS 🇬🇧',
+    url: 'https://swap.ca/products/canada-ro-nomination-whv',
+    file: 'last_fingerprint_en.txt'
+  }
+];
 
-async function checkAndreaScript() {
+async function checkAllSites() {
+  // Si mode test, on envoie juste un mail et on quitte
+  if (process.env.FORCE_EMAIL === 'true') {
+    await sendNotification('TEST', 'TEST MANUEL GLOBAL REUSSI');
+    return;
+  }
+
+  // On boucle sur chaque site (l'un après l'autre)
+  for (const site of TARGETS) {
+    await checkOneSite(site);
+  }
+}
+
+async function checkOneSite(site) {
+  const filePath = path.join(__dirname, site.file);
+  
   try {
-    if (process.env.FORCE_EMAIL === 'true') {
-      await sendNotification('TEST : Surveillance du Script de redirection active.');
-      return;
-    }
-
-    console.log('🔍 Analyse du code source...');
-    const response = await axios.get(URL, {
+    console.log(`🔍 [${site.name}] Analyse en cours...`);
+    
+    const response = await axios.get(site.url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' }
     });
     const $ = cheerio.load(response.data);
 
-    // --- 1. SURVEILLANCE DU SCRIPT "ANDREA EDIT" ---
-    // C'est votre découverte : on cherche le script qui contient la logique de redirection
+    // --- 1. SURVEILLANCE DU SCRIPT "ANDREA EDIT" (Universel) ---
     let scriptContent = "SCRIPT NON TROUVÉ";
-    
     $('script').each((i, el) => {
       const content = $(el).html() || "";
-      // On cherche le script qui contient la liste des redirections
       if (content.includes('const redirects = {') && content.includes('canada-ro-nomination-whv')) {
-        // On nettoie le script pour enlever les espaces inutiles et n'avoir que le code pur
         scriptContent = content.replace(/\s+/g, ' ').trim();
-        return false; // On arrête dès qu'on l'a trouvé
+        return false;
       }
     });
 
-    // --- 2. SURVEILLANCE DU TEXTE "MISE À JOUR" (Backup) ---
-    // On garde ça car c'est utile pour les infos humaines
+    // --- 2. SURVEILLANCE TEXTE (FR: Mise à jour / EN: Update) ---
     let updateText = "Section info non trouvée";
+    // On cherche large pour couvrir les deux langues
     $('h3, h4, p, strong').each((i, el) => {
       const t = $(el).text().toLowerCase();
       if (t.includes('mise à jour') || t.includes('update')) {
@@ -45,58 +63,46 @@ async function checkAndreaScript() {
       }
     });
 
-    // --- 3. CRÉATION DE LA SIGNATURE ---
-    // Si Andrea ajoute l'URL dans le script, cette signature va changer radicalement.
+    // --- 3. SIGNATURE ---
     const currentFingerprint = `
-    --- SCRIPT DE REDIRECTION ---
-    ${scriptContent.substring(0, 200)}... (Code hashé pour suivi)
-    Longueur du script: ${scriptContent.length} caractères
-    
-    --- SECTION INFO ---
+    --- SCRIPT ---
+    Hash: ${scriptContent.substring(0, 50)}...
+    Longueur: ${scriptContent.length} chars
+    --- INFO ---
     ${updateText}
     `;
 
-    console.log('Signature actuelle générée.');
-
     // --- 4. COMPARAISON ---
     let lastFingerprint = '';
-    if (fs.existsSync(FILE_PATH)) {
-      lastFingerprint = fs.readFileSync(FILE_PATH, 'utf8');
+    if (fs.existsSync(filePath)) {
+      lastFingerprint = fs.readFileSync(filePath, 'utf8');
     }
 
-    // Fonction simple pour normaliser (ignorer les petits espaces)
     const normalize = (str) => str.replace(/\s+/g, ' ').trim();
 
     if (normalize(currentFingerprint) !== normalize(lastFingerprint)) {
-      console.log('🚨 CHANGEMENT DANS LE CODE OU LE TEXTE !');
-      
-      // On sauvegarde
-      fs.writeFileSync(FILE_PATH, currentFingerprint);
+      console.log(`🚨 [${site.name}] CHANGEMENT DÉTECTÉ !`);
+      fs.writeFileSync(filePath, currentFingerprint);
 
-      // On alerte (sauf si c'est la première fois)
       if (lastFingerprint !== '') {
-        // On analyse vite fait pourquoi ça a changé pour le mail
-        let subject = '🚨 SWAP ALERTE : ';
-        if (scriptContent.length !== (lastFingerprint.match(/Longueur du script: (\d+)/)?.[1] || 0)) {
-            subject += 'LE SCRIPT A CHANGÉ (Lien ajouté ?)';
-        } else {
-            subject += 'INFO MISE À JOUR';
-        }
-
-        await sendNotification(`Le code de la page a changé !\nProbablement l'ajout du lien de redirection.\n\n${currentFingerprint}`, subject);
+        await sendNotification(
+          site.name, 
+          `Changement détecté sur la version ${site.name} !\n\n${currentFingerprint}`,
+          site.url
+        );
       } else {
-        console.log('Initialisation terminée. Script repéré.');
+        console.log(`✅ [${site.name}] Initialisation terminée.`);
       }
     } else {
-      console.log('✅ R.A.S. (Le script de redirection est identique).');
+      console.log(`✅ [${site.name}] R.A.S.`);
     }
 
   } catch (error) {
-    console.error(error);
+    console.error(`❌ Erreur sur ${site.name} :`, error.message);
   }
 }
 
-async function sendNotification(msg, subjectLine) {
+async function sendNotification(siteName, msg, url) {
   const destinataires = process.env.RECIPIENTS || process.env.GMAIL_USER;
   const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -106,11 +112,11 @@ async function sendNotification(msg, subjectLine) {
   await transporter.sendMail({
     from: process.env.GMAIL_USER,
     to: process.env.GMAIL_USER,
-    bcc: destinataires,
-    subject: subjectLine || '🚨 SWAP CANADA : UPDATE !',
-    text: `${msg}\n\nGO GO GO : ${URL}`
+    //bcc: destinataires,
+    subject: `🚨 SWAP ALERTE (${siteName})`,
+    text: `${msg}\n\nLIEN : ${url || 'N/A'}`
   });
   console.log('Mail envoyé.');
 }
 
-checkAndreaScript();
+checkAllSites();
