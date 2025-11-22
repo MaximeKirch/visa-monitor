@@ -1,0 +1,1 @@
+SCHEMA: http://schema.org/OutOfStock | TEXTE: Out of stock | BTN: BOUTON ABSENT
