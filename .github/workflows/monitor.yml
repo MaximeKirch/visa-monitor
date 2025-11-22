@@ -1,0 +1,50 @@
+name: Check Visa Timestamp
+
+on:
+  schedule:
+    - cron: '0,30 * * * *' # Toutes les 30 mins
+  workflow_dispatch:
+    inputs:
+      force_email:
+        description: "Forcer l'envoi du mail de test ?"
+        required : true 
+        default : false 
+        type: boolean
+
+jobs:
+  check-timestamp:
+    runs-on: ubuntu-latest
+    
+    # Important : donne la permission d'écrire dans le dépôt
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Run script
+      env:
+        GMAIL_USER: ${{ secrets.GMAIL_USER }}
+        GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+        RECIPIENTS: ${{ secrets.RECIPIENTS }}
+        FORCE_EMAIL : ${{secrets.FORCE_EMAIL }}
+      run: node index.js
+
+    # C'est ici que la magie opère : on sauvegarde le fichier si il a changé
+    - name: Commit and push if changed
+      run: |
+        git config --global user.name 'Visa Bot'
+        git config --global user.email 'bot@noreply.github.com'
+        git add last_update.txt
+        # Ne commit que s'il y a un changement, sinon ne fait rien
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update timestamp" && git push)name: Check Visa Timestamp
+
