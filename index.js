@@ -112,7 +112,7 @@ async function sendNotification(siteName, msg, url) {
   await transporter.sendMail({
     from: process.env.GMAIL_USER,
     to: process.env.GMAIL_USER,
-    //bcc: destinataires,
+    bcc: destinataires,
     subject: `🚨 SWAP ALERTE (${siteName})`,
     text: `${msg}\n\nLIEN : ${url || 'N/A'}`
   });
