@@ -10,7 +10,7 @@ async function checkUpdate() {
   try {
     // ---- BLOC DE TEST ---- 
 
-    if (process.env.FORCE_EMAIL === 'true') {
+    if (process.env.force_email === 'true') {
       console.log('🧪 MODE TEST ACTIVÉ : Envoi forcé du mail.')
 
       await sendNotification('TEST DE FONCTIONNEMENT - Le système est opérationnel !');
