@@ -1,78 +1,116 @@
 const axios = require('axios');
+const cheerio = require('cheerio');
 const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 
-const URL = 'https://swap.ca/fr/products/canada-ro-nomination-whv.json';
-const FILE_PATH = path.join(__dirname, 'last_update.txt');
+const URL = 'https://swap.ca/fr/products/canada-ro-nomination-whv';
+const FILE_PATH = path.join(__dirname, 'last_fingerprint.txt');
 
-async function checkUpdate() {
+async function checkAndreaScript() {
   try {
-    // ---- BLOC DE TEST ---- 
-
-    if (process.env.force_email === 'true') {
-      console.log('🧪 MODE TEST ACTIVÉ : Envoi forcé du mail.')
-
-      await sendNotification('TEST DE FONCTIONNEMENT - Le système est opérationnel !');
+    if (process.env.FORCE_EMAIL === 'true') {
+      await sendNotification('TEST : Surveillance du Script de redirection active.');
       return;
     }
-    // 1. Récupérer le JSON en ligne
-    console.log('🔍 Vérification du timestamp...');
-    const response = await axios.get(URL);
-    const currentUpdatedAt = response.data.product.updated_at;
 
-    console.log(`Date actuelle sur le site : ${currentUpdatedAt}`);
+    console.log('🔍 Analyse du code source...');
+    const response = await axios.get(URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' }
+    });
+    const $ = cheerio.load(response.data);
 
-    // 2. Lire la dernière date connue (si le fichier existe)
-    let lastKnownDate = '';
+    // --- 1. SURVEILLANCE DU SCRIPT "ANDREA EDIT" ---
+    // C'est votre découverte : on cherche le script qui contient la logique de redirection
+    let scriptContent = "SCRIPT NON TROUVÉ";
+    
+    $('script').each((i, el) => {
+      const content = $(el).html() || "";
+      // On cherche le script qui contient la liste des redirections
+      if (content.includes('const redirects = {') && content.includes('canada-ro-nomination-whv')) {
+        // On nettoie le script pour enlever les espaces inutiles et n'avoir que le code pur
+        scriptContent = content.replace(/\s+/g, ' ').trim();
+        return false; // On arrête dès qu'on l'a trouvé
+      }
+    });
+
+    // --- 2. SURVEILLANCE DU TEXTE "MISE À JOUR" (Backup) ---
+    // On garde ça car c'est utile pour les infos humaines
+    let updateText = "Section info non trouvée";
+    $('h3, h4, p, strong').each((i, el) => {
+      const t = $(el).text().toLowerCase();
+      if (t.includes('mise à jour') || t.includes('update')) {
+        updateText = $(el).text().trim() + ' -> ' + $(el).next().text().trim();
+        return false;
+      }
+    });
+
+    // --- 3. CRÉATION DE LA SIGNATURE ---
+    // Si Andrea ajoute l'URL dans le script, cette signature va changer radicalement.
+    const currentFingerprint = `
+    --- SCRIPT DE REDIRECTION ---
+    ${scriptContent.substring(0, 200)}... (Code hashé pour suivi)
+    Longueur du script: ${scriptContent.length} caractères
+    
+    --- SECTION INFO ---
+    ${updateText}
+    `;
+
+    console.log('Signature actuelle générée.');
+
+    // --- 4. COMPARAISON ---
+    let lastFingerprint = '';
     if (fs.existsSync(FILE_PATH)) {
-      lastKnownDate = fs.readFileSync(FILE_PATH, 'utf8').trim();
+      lastFingerprint = fs.readFileSync(FILE_PATH, 'utf8');
     }
 
-    // 3. Comparer
-    if (currentUpdatedAt !== lastKnownDate) {
-      console.log('🚨 CHANGEMENT DÉTECTÉ !');
+    // Fonction simple pour normaliser (ignorer les petits espaces)
+    const normalize = (str) => str.replace(/\s+/g, ' ').trim();
 
-      // A. On envoie le mail
-      await sendNotification(currentUpdatedAt);
+    if (normalize(currentFingerprint) !== normalize(lastFingerprint)) {
+      console.log('🚨 CHANGEMENT DANS LE CODE OU LE TEXTE !');
+      
+      // On sauvegarde
+      fs.writeFileSync(FILE_PATH, currentFingerprint);
 
-      // B. On met à jour le fichier localement (GitHub s'occupera de sauvegarder ça)
-      fs.writeFileSync(FILE_PATH, currentUpdatedAt);
-      console.log('Fichier last_update.txt mis à jour.');
+      // On alerte (sauf si c'est la première fois)
+      if (lastFingerprint !== '') {
+        // On analyse vite fait pourquoi ça a changé pour le mail
+        let subject = '🚨 SWAP ALERTE : ';
+        if (scriptContent.length !== (lastFingerprint.match(/Longueur du script: (\d+)/)?.[1] || 0)) {
+            subject += 'LE SCRIPT A CHANGÉ (Lien ajouté ?)';
+        } else {
+            subject += 'INFO MISE À JOUR';
+        }
 
+        await sendNotification(`Le code de la page a changé !\nProbablement l'ajout du lien de redirection.\n\n${currentFingerprint}`, subject);
+      } else {
+        console.log('Initialisation terminée. Script repéré.');
+      }
     } else {
-      console.log('✅ Aucune modification (Dates identiques).');
+      console.log('✅ R.A.S. (Le script de redirection est identique).');
     }
 
   } catch (error) {
-    console.error('Erreur :', error);
+    console.error(error);
   }
 }
 
-async function sendNotification(newDate) {
-
+async function sendNotification(msg, subjectLine) {
   const destinataires = process.env.RECIPIENTS || process.env.GMAIL_USER;
-
   const transporter = nodemailer.createTransport({
     service: 'gmail',
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_PASS,
-    },
+    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS }
   });
 
-  const mailOptions = {
+  await transporter.sendMail({
     from: process.env.GMAIL_USER,
     to: process.env.GMAIL_USER,
     bcc: destinataires,
-    subject: '🚨 SWAP.CA : FICHE MISE À JOUR !',
-    text: `La date de mise à jour du produit a changé !\n\nNouvelle date : ${newDate}\n\nC'est le moment d'aller voir : https://swap.ca/fr/products/canada-ro-nomination-whv`,
-  };
-
-  await transporter.sendMail(mailOptions);
+    subject: subjectLine || '🚨 SWAP CANADA : UPDATE !',
+    text: `${msg}\n\nGO GO GO : ${URL}`
+  });
   console.log('Mail envoyé.');
 }
 
-checkUpdate();
-
-
+checkAndreaScript();
