@@ -2,8 +2,8 @@
   "name": "visa-monitor",
   "version": "1.0.0",
   "dependencies": {
-    "nodemailer": "ˆ6.9.0",
-    "axios": "^1.6.0",
-    "cheerio": "^1.0.0-rc.12"
+    "axios": "^1.13.2",
+    "cheerio": "^1.0.0-rc.12",
+    "nodemailer": "^7.0.10"
   }
 }
