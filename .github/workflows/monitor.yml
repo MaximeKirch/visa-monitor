@@ -2,7 +2,7 @@ name: Check Visa Timestamp
 
 on:
   schedule:
-    - cron: '0,30 * * * *' # Toutes les 30 minutes
+    - cron: '12,42 * * * *' # Toutes les 30 minutes, en évitant les pics de charge des heures rondes
   workflow_dispatch:
     inputs:
       force_email:
